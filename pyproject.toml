@@ -1,0 +1,43 @@
+[tool.poetry]
+name = "adaptive-learning-platform"
+version = "0.1.0"
+description = "Backend адаптивной обучающей платформы (API-first)."
+authors = ["Volynce"]
+readme = "README.md"
+
+# Важно: пакет будет расположен в src/ (src-based layout).
+# На этапе Step-02 мы ставим зависимости без установки самого пакета (poetry install --no-root),
+# потому что src-каркас создадим на следующем шаге.
+packages = [{ include = "adaptive_learning_platform", from = "src" }]
+
+[tool.poetry.dependencies]
+# Фиксация версии Python: используем 3.12.x (из-за совместимости библиотек).
+python = ">=3.12,<3.13"
+
+# Базовый backend-стек (минимум для дальнейших шагов)
+fastapi = "*"
+uvicorn = { version = "*", extras = ["standard"] }
+
+# Конфигурация через env (typed settings)
+pydantic-settings = "*"
+
+# БД + миграции
+sqlalchemy = "*"
+psycopg = { version = "*", extras = ["binary"] }
+alembic = "*"
+
+# Авторизация (JWT) и хеширование паролей
+python-jose = { version = "*", extras = ["cryptography"] }
+passlib = { version = "*", extras = ["bcrypt"] }
+
+[tool.poetry.group.dev.dependencies]
+# Тестирование и качество кода
+pytest = "*"
+httpx = "*"
+ruff = "*"
+black = "*"
+mypy = "*"
+
+[build-system]
+requires = ["poetry-core>=2.0.0"]
+build-backend = "poetry.core.masonry.api"
