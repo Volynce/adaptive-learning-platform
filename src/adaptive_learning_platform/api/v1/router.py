@@ -9,6 +9,7 @@ from adaptive_learning_platform.api.v1.settings.routes import router as settings
 from adaptive_learning_platform.api.v1.health.routes import router as health_router
 from adaptive_learning_platform.api.v1.users.routes import router as users_router
 from adaptive_learning_platform.api.v1.progress.routes import router as progress_router
+from adaptive_learning_platform.api.v1.diagnostika.routes import router as diagnostika_router
 
 v1_router = APIRouter(prefix="/api/v1")
 
@@ -22,3 +23,4 @@ v1_router.include_router(settings_router, prefix="/settings", tags=["settings"])
 v1_router.include_router(health_router, prefix="/health", tags=["health"])
 v1_router.include_router(users_router, prefix="/users", tags=["users"])
 v1_router.include_router(progress_router, prefix="/progress", tags=["progress"])
+v1_router.include_router(diagnostika_router, prefix="/diagnostika", tags=["diagnostika"])
