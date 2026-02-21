@@ -6,6 +6,8 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from adaptive_learning_platform.infrastructure.security.password import hash_password
+from adaptive_learning_platform.infrastructure.security.password import verify_password
+from adaptive_learning_platform.infrastructure.security.jwt import create_access_token
 
 
 @dataclass(frozen=True)
@@ -29,6 +31,15 @@ class MissingBootstrapData(SignupError):
     Это ожидаемо до шага с сидингом.
     """
     pass
+
+class InvalidCredentials(SignupError):
+    pass
+
+
+@dataclass(frozen=True)
+class LoginResult:
+    access_token: str
+    token_type: str = "bearer"
 
 
 def signup(db: Session, *, email: str, full_name: str, password: str) -> SignupResult:
@@ -114,3 +125,26 @@ def signup(db: Session, *, email: str, full_name: str, password: str) -> SignupR
     )
 
     return SignupResult(user_id=user_id, email=email, full_name=full_name)
+
+def login(db: Session, *, email: str, password: str) -> LoginResult:
+    """
+    Минимальный login для учебного стенда:
+    - проверяет email/пароль
+    - выдаёт access JWT
+    """
+    row = db.execute(
+        text("SELECT id, password_hash FROM users WHERE email = :email"),
+        {"email": email},
+    ).fetchone()
+
+    if row is None:
+        raise InvalidCredentials()
+
+    user_id = int(row[0])
+    password_hash = str(row[1])
+
+    if not verify_password(password, password_hash):
+        raise InvalidCredentials()
+
+    token = create_access_token(subject=str(user_id))
+    return LoginResult(access_token=token)

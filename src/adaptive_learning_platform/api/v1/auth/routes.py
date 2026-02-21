@@ -10,6 +10,8 @@ from adaptive_learning_platform.application.services.auth_service import (
     MissingBootstrapData,
     signup,
 )
+from adaptive_learning_platform.api.v1.auth.schemas import LoginRequest, TokenResponse
+from adaptive_learning_platform.application.services.auth_service import InvalidCredentials, login
 
 router = APIRouter()
 
@@ -65,3 +67,15 @@ def signup_endpoint(payload: SignupRequest, db: Session = Depends(get_db)) -> Si
     except Exception:
         db.rollback()
         raise
+
+@router.post(
+    "/login",
+    response_model=TokenResponse,
+    summary="Логин (выдача access JWT)",
+)
+def login_endpoint(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
+    try:
+        result = login(db, email=payload.email, password=payload.password)
+        return TokenResponse(access_token=result.access_token, token_type="bearer")
+    except InvalidCredentials:
+        raise HTTPException(status_code=401, detail="Неверный email или пароль")
