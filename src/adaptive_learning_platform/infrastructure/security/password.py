@@ -3,8 +3,7 @@ from __future__ import annotations
 from passlib.context import CryptContext
 
 # На учебном стенде используем bcrypt. Параметры (rounds) можно позже связать с Settings.
-_pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
+_pwd_context = CryptContext(schemes=["bcrypt_sha256"], deprecated="auto")
 
 def hash_password(password: str) -> str:
     return _pwd_context.hash(password)
