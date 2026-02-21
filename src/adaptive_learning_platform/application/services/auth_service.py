@@ -53,11 +53,20 @@ def signup(db: Session, *, email: str, full_name: str, password: str) -> SignupR
 
     track_id = int(track_row[0])
 
-    # 3) Ищем стартовую стадию (минимально: первая по rank/level)
+    # 3) Ищем стартовую стадию строго как Trainee_0.
+    # Это устраняет ошибку лексикографической сортировки rank (junior < trainee).
     stage_row = db.execute(
-        text("SELECT id FROM stages WHERE track_id = :tid ORDER BY rank ASC, level ASC LIMIT 1"),
+        text("SELECT id FROM stages WHERE track_id = :tid AND rank = 'trainee' AND level = 0 LIMIT 1"),
         {"tid": track_id},
     ).fetchone()
+
+    # fallback (на случай нестандартного трека/данных)
+    if stage_row is None:
+        stage_row = db.execute(
+            text("SELECT id FROM stages WHERE track_id = :tid ORDER BY rank ASC, level ASC LIMIT 1"),
+            {"tid": track_id},
+        ).fetchone()
+
     if stage_row is None:
         raise MissingBootstrapData("Нет stages. Сначала выполните сидинг справочников.")
 
