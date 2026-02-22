@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Dict, Any
+from typing import Dict, List
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -24,6 +24,7 @@ class MissingArticles(ContentError):
 
 
 class NotTraineeStage(ContentError):
+    """Оставлено для обратной совместимости, но больше не используется."""
     pass
 
 
@@ -77,12 +78,27 @@ def _get_active_stage_ctx(db: Session, user_id: int) -> dict:
     }
 
 
+def _is_optional_title(title: str) -> bool:
+    # MVP-правило: kind кодируется в title (seed делает "... — optional/required")
+    return "optional" in title.lower()
+
+
+def _is_required_title(title: str) -> bool:
+    return "required" in title.lower()
+
+
 def assign_content_for_current_stage(db: Session, *, user_id: int) -> dict:
     """
     Назначение статей на текущую активную стадию.
-    Правило:
-    - optional: по content_optional_per_module на каждый модуль трека
-    - required: по 1 статье на каждый из K слабых модулей (errors = total - correct)
+
+    Правило (MVP):
+    - optional: по content_optional_per_module на каждый модуль трека,
+               выбираются статьи с признаком optional в title.
+    - required: по 1 статье на каждый из K слабых модулей,
+                выбираются статьи с признаком required в title.
+
+    Слабость (пока baseline):
+    - errors = total_cnt - correct_cnt из diagnostika_module_stats.
     """
     ctx = _get_active_stage_ctx(db, user_id)
     stage_id = ctx["stage_id"]
@@ -90,10 +106,6 @@ def assign_content_for_current_stage(db: Session, *, user_id: int) -> dict:
     rank = ctx["rank"]
     level = ctx["level"]
     track_id = ctx["track_id"]
-
-    # ограничиваем MVP: выдача контента в Step-19 только на Trainee_0
-    if not (rank == "trainee" and level == 0):
-        raise NotTraineeStage("Назначение контента в Step-19 реализовано только для Trainee_0")
 
     # запрет повторного назначения (если уже есть хотя бы 1 статья на этой стадии)
     exists = db.execute(
@@ -181,18 +193,28 @@ def assign_content_for_current_stage(db: Session, *, user_id: int) -> dict:
 
         all_articles = [{"id": int(r[0]), "title": str(r[1]), "content_ref": str(r[2])} for r in arows]
 
-        if len(all_articles) < optional_per_module:
-            raise MissingArticles(f"Недостаточно статей для module_id={mid}: нужно optional {optional_per_module}")
+        # Разделяем статьи по kind через title (MVP-правило)
+        optional_candidates = [a for a in all_articles if _is_optional_title(a["title"])]
+        required_candidates = [a for a in all_articles if _is_required_title(a["title"])]
 
-        opt = all_articles[:optional_per_module]
+        if len(optional_candidates) < optional_per_module:
+            raise MissingArticles(
+                f"Недостаточно optional-статей для module_id={mid} на rank={rank}, level={level}: "
+                f"нужно {optional_per_module}, есть {len(optional_candidates)}"
+            )
+
+        opt = optional_candidates[:optional_per_module]
         selected_optional[mid] = opt
 
         if mid in weak_module_ids:
-            # required: 1 статья, отличная от optional
-            remaining = [a for a in all_articles if a["id"] not in {x["id"] for x in opt}]
-            if len(remaining) < 1:
-                raise MissingArticles(f"Недостаточно статей для required в weak module_id={mid}: нужно optional+required")
-            selected_required[mid] = [remaining[0]]
+            # required: 1 статья (может совпадать с optional только если title криво размечен)
+            remaining_required = [a for a in required_candidates if a["id"] not in {x["id"] for x in opt}]
+            if len(remaining_required) < 1:
+                raise MissingArticles(
+                    f"Недостаточно required-статей для weak module_id={mid} на rank={rank}, level={level}: "
+                    f"нужно >=1 (отдельно от optional)"
+                )
+            selected_required[mid] = [remaining_required[0]]
 
     # запись назначений
     assigned_optional = 0
@@ -229,6 +251,8 @@ def assign_content_for_current_stage(db: Session, *, user_id: int) -> dict:
     return {
         "stage_id": stage_id,
         "diagnostika_id": diagnostika_id,
+        "rank": rank,
+        "level": level,
         "assigned_optional": assigned_optional,
         "assigned_required": assigned_required,
         "weak_module_ids": weak_module_ids,
