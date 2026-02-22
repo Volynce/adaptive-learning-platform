@@ -11,6 +11,13 @@ from adaptive_learning_platform.application.services.level_exam_service import (
     NotEnoughQuestions,
     start_level_exam,
 )
+from adaptive_learning_platform.api.v1.exams.schemas import SubmitLevelExamRequest, SubmitLevelExamResponse
+from adaptive_learning_platform.application.services.level_exam_service import (
+    AttemptNotFound,
+    AttemptAlreadyFinalized,
+    InvalidAnswers,
+    submit_level_exam,
+)
 
 router = APIRouter()
 
@@ -72,3 +79,40 @@ def start_level(db: Session = Depends(get_db), user_id: int = Depends(current_us
         db.rollback()
         raise
 
+@router.post(
+    "/level/{attempt_id}/submit",
+    response_model=SubmitLevelExamResponse,
+    summary="Сабмит попытки level-exam (20 ответов, PASS>=pass_score)",
+)
+def submit_level(
+    attempt_id: int,
+    payload: SubmitLevelExamRequest,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(current_user_id),
+) -> SubmitLevelExamResponse:
+    try:
+        res = submit_level_exam(
+            db,
+            user_id=user_id,
+            attempt_id=attempt_id,
+            answers=[a.model_dump() for a in payload.answers],
+        )
+        db.commit()
+        return SubmitLevelExamResponse(
+            attempt_id=res.attempt_id,
+            score_total=res.score_total,
+            pass_score=res.pass_score,
+            passed=res.passed,
+        )
+    except (AttemptNotFound,) as e:
+        db.rollback()
+        raise HTTPException(status_code=404, detail=str(e))
+    except (AttemptAlreadyFinalized,) as e:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(e))
+    except (InvalidAnswers,) as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception:
+        db.rollback()
+        raise

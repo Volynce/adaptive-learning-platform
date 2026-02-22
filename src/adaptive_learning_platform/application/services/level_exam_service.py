@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from adaptive_learning_platform.application.services.eligibility_service import get_level_exam_eligibility, EligibilityReport
 
+from datetime import datetime
 
 class LevelExamError(Exception):
     pass
@@ -247,3 +248,180 @@ def start_level_exam(db: Session, *, user_id: int) -> StartLevelExamResult:
 
     questions = [QuestionDTO(id=v["id"], text=v["text"], options=v["options"]) for v in by_q.values()]
     return StartLevelExamResult(attempt_id=attempt_id, attempt_no=attempt_no, total_q=total_q, questions=questions)
+
+@dataclass(frozen=True)
+class SubmitLevelExamResult:
+    attempt_id: int
+    score_total: int
+    pass_score: int
+    passed: bool
+
+
+class AttemptNotFound(LevelExamError):
+    pass
+
+
+class AttemptAlreadyFinalized(LevelExamError):
+    pass
+
+
+class InvalidAnswers(LevelExamError):
+    pass
+
+
+def submit_level_exam(db: Session, *, user_id: int, attempt_id: int, answers: List[dict]) -> SubmitLevelExamResult:
+    # 1) блокируем попытку на время проверки/записи
+    row = db.execute(
+        text(
+            """
+            SELECT a.id, a.user_id, a.stage_id, a.passed, usp.settings_version_id
+            FROM level_exam_attempts a
+            JOIN user_stage_progress usp ON usp.user_id=a.user_id AND usp.stage_id=a.stage_id
+            WHERE a.id=:aid
+            FOR UPDATE
+            """
+        ),
+        {"aid": attempt_id},
+    ).fetchone()
+
+    if row is None:
+        raise AttemptNotFound("Попытка level-exam не найдена")
+
+    a_user_id = int(row[1])
+    stage_id = int(row[2])
+    passed = bool(row[3])
+    settings_version_id = int(row[4])
+
+    if a_user_id != user_id:
+        raise AttemptNotFound("Попытка level-exam не принадлежит текущему пользователю")
+
+    if passed:
+        raise AttemptAlreadyFinalized("Попытка уже завершена PASS и не может быть пересдана/перезаписана")
+
+    # 2) получаем вопросы попытки (20)
+    qrows = db.execute(
+        text("SELECT question_id FROM level_exam_attempt_questions WHERE attempt_id=:aid ORDER BY question_id"),
+        {"aid": attempt_id},
+    ).fetchall()
+    qids = [int(r[0]) for r in qrows]
+    if not qids:
+        raise LevelExamError("У попытки нет закрепленных вопросов")
+
+    expected_set = set(qids)
+
+    if len(answers) != len(qids):
+        raise InvalidAnswers(f"Нужно ответить на все вопросы попытки: {len(qids)} шт.")
+
+    seen = set()
+    for a in answers:
+        qid = int(a["question_id"])
+        if qid not in expected_set:
+            raise InvalidAnswers(f"Вопрос {qid} не входит в попытку")
+        if qid in seen:
+            raise InvalidAnswers(f"Дублирующийся ответ на вопрос {qid}")
+        seen.add(qid)
+
+    # 3) pass_score из настроек
+    srow = db.execute(
+        text("SELECT level_exam_pass_score FROM track_settings WHERE settings_version_id=:sv"),
+        {"sv": settings_version_id},
+    ).fetchone()
+    if srow is None:
+        raise LevelExamError("Нет track_settings для активной версии настроек")
+    pass_score = int(srow[0])
+
+    # 4) очищаем предыдущие ответы (на случай повторного submit до PASS)
+    db.execute(
+        text("DELETE FROM level_exam_attempt_answers WHERE attempt_id=:aid"),
+        {"aid": attempt_id},
+    )
+
+    # 5) вставляем ответы и считаем score
+    score_total = 0
+    for a in answers:
+        qid = int(a["question_id"])
+        oid = int(a["selected_option_id"])
+
+        # FK (attempt_id,question_id) -> attempt_questions защитит от левых qid
+        db.execute(
+            text(
+                """
+                INSERT INTO level_exam_attempt_answers(attempt_id, question_id, selected_option_id)
+                VALUES (:aid, :qid, :oid)
+                """
+            ),
+            {"aid": attempt_id, "qid": qid, "oid": oid},
+        )
+
+        ok = db.execute(
+            text("SELECT 1 FROM questions WHERE id=:qid AND correct_option_id=:oid"),
+            {"qid": qid, "oid": oid},
+        ).fetchone()
+        if ok is not None:
+            score_total += 1
+
+    # 6) module_stats: считаем total/correct по module_id для данной попытки
+    db.execute(
+        text("DELETE FROM level_exam_attempt_module_stats WHERE attempt_id=:aid"),
+        {"aid": attempt_id},
+    )
+
+    ms_rows = db.execute(
+        text(
+            """
+            SELECT q.module_id,
+                   COUNT(*)::int AS total_cnt,
+                   SUM(CASE WHEN q.correct_option_id = a.selected_option_id THEN 1 ELSE 0 END)::int AS correct_cnt
+            FROM level_exam_attempt_questions aq
+            JOIN questions q ON q.id = aq.question_id
+            JOIN level_exam_attempt_answers a ON a.attempt_id = aq.attempt_id AND a.question_id = aq.question_id
+            WHERE aq.attempt_id = :aid
+            GROUP BY q.module_id
+            ORDER BY q.module_id
+            """
+        ),
+        {"aid": attempt_id},
+    ).fetchall()
+
+    for module_id, total_cnt, correct_cnt in ms_rows:
+        db.execute(
+            text(
+                """
+                INSERT INTO level_exam_attempt_module_stats(attempt_id, module_id, correct_cnt, total_cnt)
+                VALUES (:aid, :mid, :cc, :tc)
+                """
+            ),
+            {"aid": attempt_id, "mid": int(module_id), "cc": int(correct_cnt), "tc": int(total_cnt)},
+        )
+
+    # 7) фиксируем итог попытки
+    passed_now = score_total >= pass_score
+    if passed_now:
+        db.execute(
+            text(
+                """
+                UPDATE level_exam_attempts
+                SET score_total=:score, passed=true, passed_at=now()
+                WHERE id=:aid AND passed=false
+                """
+            ),
+            {"score": score_total, "aid": attempt_id},
+        )
+    else:
+        db.execute(
+            text(
+                """
+                UPDATE level_exam_attempts
+                SET score_total=:score
+                WHERE id=:aid
+                """
+            ),
+            {"score": score_total, "aid": attempt_id},
+        )
+
+    return SubmitLevelExamResult(
+        attempt_id=attempt_id,
+        score_total=score_total,
+        pass_score=pass_score,
+        passed=passed_now,
+    )
