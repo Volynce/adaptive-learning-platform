@@ -15,6 +15,21 @@ from adaptive_learning_platform.application.services.content_service import (
     list_my_stage_articles,
     mark_optional_read,
 )
+from adaptive_learning_platform.api.v1.content.schemas import (
+    GetMinitestResponse,
+    MinitestQuestionOut,
+    AnswerOptionOut,
+    SubmitMinitestRequest,
+    SubmitMinitestResponse,
+)
+from adaptive_learning_platform.application.services.minitest_service import (
+    ArticleNotAssigned,
+    NotRequiredArticle,
+    MinitestNotConfigured,
+    MinitestError,
+    get_minitest,
+    submit_minitest,
+)
 
 router = APIRouter()
 
@@ -75,3 +90,58 @@ def mark_read(article_id: int, db: Session = Depends(get_db), user_id: int = Dep
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
+
+@router.get(
+    "/{article_id}/minitest",
+    response_model=GetMinitestResponse,
+    summary="Получить мини-тест (3 вопроса) для required статьи",
+)
+def api_get_minitest(article_id: int, db: Session = Depends(get_db), user_id: int = Depends(current_user_id)) -> GetMinitestResponse:
+    try:
+        res = get_minitest(db, user_id=user_id, article_id=article_id)
+        return GetMinitestResponse(
+            article_id=res.article_id,
+            questions=[
+                MinitestQuestionOut(
+                    id=q.id,
+                    text=q.text,
+                    options=[AnswerOptionOut(id=o.id, pos=o.pos, text=o.text) for o in q.options],
+                )
+                for q in res.questions
+            ],
+        )
+    except (ArticleNotAssigned, NotRequiredArticle) as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except MinitestNotConfigured as e:
+        raise HTTPException(status_code=412, detail=str(e))
+
+
+@router.post(
+    "/{article_id}/minitest/submit",
+    response_model=SubmitMinitestResponse,
+    summary="Отправить ответы мини-теста; PASS только при 3/3",
+)
+def api_submit_minitest(article_id: int, payload: SubmitMinitestRequest, db: Session = Depends(get_db), user_id: int = Depends(current_user_id)) -> SubmitMinitestResponse:
+    try:
+        res = submit_minitest(
+            db,
+            user_id=user_id,
+            article_id=article_id,
+            answers=[a.model_dump() for a in payload.answers],
+        )
+        db.commit()
+        return SubmitMinitestResponse(
+            article_id=res.article_id,
+            passed=res.passed,
+            correct_cnt=res.correct_cnt,
+            total_cnt=res.total_cnt,
+        )
+    except (ArticleNotAssigned, NotRequiredArticle) as e:
+        db.rollback()
+        raise HTTPException(status_code=403, detail=str(e))
+    except (MinitestNotConfigured, MinitestError) as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception:
+        db.rollback()
+        raise

@@ -19,3 +19,34 @@ class AssignedArticleOut(BaseModel):
     kind: str
     is_read: bool
     minitest_passed: bool
+
+class AnswerOptionOut(BaseModel):
+    id: int
+    pos: int
+    text: str
+
+class MinitestQuestionOut(BaseModel):
+    id: int
+    text: str
+    options: list[AnswerOptionOut]
+
+
+class GetMinitestResponse(BaseModel):
+    article_id: int
+    questions: list[MinitestQuestionOut]
+
+
+class SubmitMinitestAnswerIn(BaseModel):
+    question_id: int
+    selected_option_id: int
+
+
+class SubmitMinitestRequest(BaseModel):
+    answers: list[SubmitMinitestAnswerIn]
+
+
+class SubmitMinitestResponse(BaseModel):
+    article_id: int
+    passed: bool
+    correct_cnt: int
+    total_cnt: int
