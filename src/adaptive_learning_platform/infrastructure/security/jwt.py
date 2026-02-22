@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict
+from typing import Any
 
 from jose import JWTError, jwt
 
@@ -9,32 +9,48 @@ from adaptive_learning_platform.config.settings import get_settings
 
 
 class JWTDecodeError(Exception):
-    pass
+    """Токен не удалось декодировать/проверить."""
 
 
-def create_access_token(*, subject: str, extra: Dict[str, Any] | None = None) -> str:
+def create_access_token(*, subject: str, scope: str = "user", extra: dict[str, Any] | None = None) -> str:
     """
-    Создаёт access JWT.
-    subject: строковый идентификатор пользователя (обычно user_id).
+    Выпуск access JWT.
+
+    Инварианты проекта:
+    - type = "access"
+    - sub = идентификатор субъекта (user_id или admin_id) в виде строки
+    - scope = "user" | "admin" (для разделения областей доступа)
+    - iat/exp задаются в UTC
     """
-    settings = get_settings()
+    s = get_settings()
     now = datetime.now(timezone.utc)
 
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "sub": subject,
-        "iat": int(now.timestamp()),
-        "exp": int((now + timedelta(minutes=settings.JWT_ACCESS_TTL_MINUTES)).timestamp()),
         "type": "access",
+        "scope": scope,
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(minutes=s.JWT_ACCESS_TTL_MINUTES)).timestamp()),
     }
+
+    # Дополнительные claim-ы (если нужны), но не даём перезаписать ключевые поля.
     if extra:
-        payload.update(extra)
+        for k, v in extra.items():
+            if k in payload:
+                continue
+            payload[k] = v
 
-    return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALG)
+    return jwt.encode(payload, s.JWT_SECRET, algorithm=s.JWT_ALG)
 
 
-def decode_token(token: str) -> Dict[str, Any]:
-    settings = get_settings()
+def decode_token(token: str) -> dict[str, Any]:
+    """
+    Декодирование и проверка подписи JWT.
+    """
+    s = get_settings()
     try:
-        return jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALG])
+        payload = jwt.decode(token, s.JWT_SECRET, algorithms=[s.JWT_ALG])
+        # jose возвращает dict, типизируем явно
+        return dict(payload)
     except JWTError as e:
-        raise JWTDecodeError(str(e)) from e
+        raise JWTDecodeError("Некорректный токен") from e
