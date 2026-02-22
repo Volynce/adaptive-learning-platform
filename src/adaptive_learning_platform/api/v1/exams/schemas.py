@@ -28,9 +28,14 @@ class SubmitExamAnswerIn(BaseModel):
 class SubmitLevelExamRequest(BaseModel):
     answers: List[SubmitExamAnswerIn]
 
+class ProgressActionOut(BaseModel):
+    action: str
+    from_stage_id: int
+    to_stage_id: int | None = None
 
 class SubmitLevelExamResponse(BaseModel):
     attempt_id: int
     score_total: int
     pass_score: int
     passed: bool
+    progress: ProgressActionOut

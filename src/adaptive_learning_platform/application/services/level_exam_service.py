@@ -10,6 +10,7 @@ from adaptive_learning_platform.application.services.eligibility_service import 
 
 from datetime import datetime
 
+from adaptive_learning_platform.application.services.progression_service import apply_progress_after_level_exam_pass, ProgressAction
 class LevelExamError(Exception):
     pass
 
@@ -255,6 +256,7 @@ class SubmitLevelExamResult:
     score_total: int
     pass_score: int
     passed: bool
+    progress: ProgressAction
 
 
 class AttemptNotFound(LevelExamError):
@@ -419,9 +421,22 @@ def submit_level_exam(db: Session, *, user_id: int, attempt_id: int, answers: Li
             {"score": score_total, "aid": attempt_id},
         )
 
+    # 8) прогрессия (строго после фиксации PASS и в той же транзакции)
+    if passed_now:
+        progress_action = apply_progress_after_level_exam_pass(
+            db,
+            user_id=user_id,
+            stage_id=stage_id,
+            settings_version_id=settings_version_id,
+        )
+    else:
+        progress_action = ProgressAction(action="none", from_stage_id=stage_id, to_stage_id=None)
+
+    # 9) единый return
     return SubmitLevelExamResult(
         attempt_id=attempt_id,
         score_total=score_total,
         pass_score=pass_score,
         passed=passed_now,
+        progress=progress_action,
     )

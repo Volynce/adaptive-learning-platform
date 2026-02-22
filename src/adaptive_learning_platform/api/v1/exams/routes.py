@@ -4,18 +4,22 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from adaptive_learning_platform.api.deps import current_user_id, get_db
-from adaptive_learning_platform.api.v1.exams.schemas import StartLevelExamResponse, ExamQuestionOut, AnswerOptionOut
+from adaptive_learning_platform.api.v1.exams.schemas import (
+    AnswerOptionOut,
+    ExamQuestionOut,
+    ProgressActionOut,
+    StartLevelExamResponse,
+    SubmitLevelExamRequest,
+    SubmitLevelExamResponse,
+)
 from adaptive_learning_platform.application.services.level_exam_service import (
     AlreadyPassed,
+    AttemptAlreadyFinalized,
+    AttemptNotFound,
+    InvalidAnswers,
     NotEligible,
     NotEnoughQuestions,
     start_level_exam,
-)
-from adaptive_learning_platform.api.v1.exams.schemas import SubmitLevelExamRequest, SubmitLevelExamResponse
-from adaptive_learning_platform.application.services.level_exam_service import (
-    AttemptNotFound,
-    AttemptAlreadyFinalized,
-    InvalidAnswers,
     submit_level_exam,
 )
 
@@ -79,6 +83,7 @@ def start_level(db: Session = Depends(get_db), user_id: int = Depends(current_us
         db.rollback()
         raise
 
+
 @router.post(
     "/level/{attempt_id}/submit",
     response_model=SubmitLevelExamResponse,
@@ -103,14 +108,15 @@ def submit_level(
             score_total=res.score_total,
             pass_score=res.pass_score,
             passed=res.passed,
+            progress=ProgressActionOut(**res.progress.__dict__),
         )
-    except (AttemptNotFound,) as e:
+    except AttemptNotFound as e:
         db.rollback()
         raise HTTPException(status_code=404, detail=str(e))
-    except (AttemptAlreadyFinalized,) as e:
+    except AttemptAlreadyFinalized as e:
         db.rollback()
         raise HTTPException(status_code=409, detail=str(e))
-    except (InvalidAnswers,) as e:
+    except InvalidAnswers as e:
         db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
     except Exception:
