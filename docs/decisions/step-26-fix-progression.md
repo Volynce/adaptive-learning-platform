@@ -56,3 +56,81 @@ apply\_progress\_after\_level\_exam\_pass() остаётся транзакци�
 
 но при необходимости будет усилено ON CONFLICT / rowcount проверками.
 
+
+
+End-to-end проверка ранговой прогрессии (junior\_1 → junior\_2)
+
+
+
+Контекст:
+
+
+
+Пользователь: seedtest3@example.com
+
+
+
+Активная стадия до экзамена: stage\_id=2 (junior\_1), status=active.
+
+
+
+Проверка:
+
+
+
+Выполнен старт экзамена: POST /api/v1/exams/level/start
+
+Получено: attempt\_id=3, total\_q=20.
+
+
+
+Выполнен submit с корректными ответами (selected\_option\_id = correct\_option\_id для каждого question\_id):
+
+POST /api/v1/exams/level/3/submit
+
+Результат:
+
+
+
+passed=true
+
+
+
+progress.action="auto\_advanced"
+
+
+
+progress.from\_stage\_id=2
+
+
+
+progress.to\_stage\_id=3
+
+
+
+Проверка текущей стадии после submit:
+
+GET /api/v1/progress/current-stage
+
+Результат: stage\_id=3 (junior\_2), status=active.
+
+
+
+Проверка в БД:
+
+
+
+user\_stage\_progress(stage\_id=2) -> completed, completed\_at заполнен
+
+
+
+user\_stage\_progress(stage\_id=3) -> active, activated\_at заполнен
+
+
+
+Вывод:
+
+
+
+Транзакционная автопрогрессия внутри ранга работает корректно: PASS level-exam на level=1/2 активирует следующий level без участия админа.
+
